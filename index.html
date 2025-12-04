@@ -197,4 +197,557 @@
             { q: "What is the SI unit of electrical resistance?", options: ["Ampere", "Volt", "Ohm", "Watt"], a: "Ohm" },
             { q: "According to Kirchhoff's voltage law, the algebraic sum of all IR drops and EMFs in any closed loop of a network is always:", options: ["Positive", "Negative", "Zero", "Determined by EMFs"], a: "Zero" },
             { q: "The main function of a fuse is to:", options: ["Protect the line", "Open the circuit", "Prevent excessive currents", "Protect the appliance"], a: "Prevent excessive currents" },
-            { q: "Which law describes the relationship between the current flowing through a conductor and the voltage across it?", options: ["Lenz's Law", "Faraday's Law", "Ohm's Law", "Kirchhoff's Law"], a: "O
+            { q: "Which law describes the relationship between the current flowing through a conductor and the voltage across it?", options: ["Lenz's Law", "Faraday's Law", "Ohm's Law", "Kirchhoff's Law"], a: "Ohm's Law" },
+            { q: "Kirchhoff's current law (KCL) is applicable only to:", options: ["Closed loops in a network", "Electric circuits", "Junctions in a network", "Non-linear circuits"], a: "Junctions in a network" },
+            { q: "What does a resistor do in an electronic circuit?", options: ["Stores energy", "Limits the flow of current", "Amplifies signals", "Generates power"], a: "Limits the flow of current" },
+            { q: "Which component is used to store electrical charge?", options: ["Inductor", "Capacitor", "Transistor", "Diode"], a: "Capacitor" },
+            { q: "In digital electronics, what does \"binary\" refer to?", options: ["A type of wire", "A system using 0s and 1s", "A power source", "A soldering tool"], a: "A system using 0s and 1s" },
+            { q: "What is the function of a microcontroller in a device like an Arduino?", options: ["To provide light", "To process and control operations", "To store large files", "To convert AC to DC"], a: "To process and control operations" },
+            { q: "Which law describes the relationship between voltage, current, and resistance?", options: ["Newton's Law", "Ohm's Law", "Faraday's Law", "Kirchhoff's Law"], a: "Ohm's Law" },
+            { q: "True or False: A transistor can act as a switch or amplifier in circuits.", options: ["True", "False"], a: "True" },
+            { q: "True or False: AC (Alternating Current) changes direction periodically, unlike DC.", options: ["True", "False"], a: "True" },
+            { q: "True or False: Soldering is used to join wires without melting them.", options: ["True", "False"], a: "False" },
+            { q: "True or False: An oscilloscope measures voltage over time in waveforms.", options: ["True", "False"], a: "True" },
+            { q: "True or False: LEDs (Light Emitting Diodes) are energy-efficient and long-lasting.", options: ["True", "False"], a: "True" },
+            { q: "True or False: A breadboard is used for prototyping circuits without soldering.", options: ["True", "False"], a: "True" },
+            { q: "True or False: Impedance is the opposition to current in AC circuits.", options: ["True", "False"], a: "True" },
+            { q: "True or False: A relay uses an electromagnet to control a switch.", options: ["True", "False"], a: "True" },
+            { q: "True or False: Digital signals have only two states: on or off.", options: ["True", "False"], a: "True" },
+            { q: "True or False: Grounding in electronics prevents electric shocks by providing a safe path.", options: ["True", "False"], a: "True" },
+        ]
+    };
+
+    // --- FIREBASE INITIALIZATION & AUTHENTICATION ---
+    async function initializeFirebase() {
+        if (!firebaseConfig) {
+            renderMessage("Error: Firebase configuration is missing.", 'danger');
+            return;
+        }
+
+        try {
+            app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+
+            if (initialAuthToken) {
+                await signInWithCustomToken(auth, initialAuthToken);
+            } else {
+                await signInAnonymously(auth);
+            }
+
+            onAuthStateChanged(auth, (user) => {
+                if (user) {
+                    userId = user.uid;
+                    if (user.displayName) {
+                        userName = user.displayName;
+                        isAuthReady = true;
+                        setupRecordListener();
+                        setView('dashboard');
+                    } else {
+                        isAuthReady = true;
+                        setView('auth');
+                    }
+                } else {
+                    userId = null;
+                    userName = null;
+                    isAuthReady = true;
+                    setView('auth');
+                }
+                document.getElementById('loading-screen').classList.add('hidden');
+            });
+        } catch (error) {
+            renderMessage(`Initialization Error: ${error.message}`, 'danger');
+            document.getElementById('loading-screen').classList.add('hidden');
+        }
+    }
+
+    // --- FIRESTORE FUNCTIONS (Data Accessors) ---
+    const getRecordsRef = (uid) => {
+        const recordsCollectionPath = `/artifacts/${appId}/users/${uid}/quiz_records`;
+        return doc(db, recordsCollectionPath, 'data');
+    };
+
+    const getPublicUsernameRef = (username) => {
+        const publicCollectionPath = `/artifacts/${appId}/public_usernames`;
+        return doc(db, publicCollectionPath, username.toLowerCase());
+    };
+
+    function setupRecordListener() {
+        if (!userId) return;
+
+        const recordsRef = getRecordsRef(userId);
+
+        onSnapshot(recordsRef, (docSnap) => {
+            if (docSnap.exists()) {
+                userRecords = docSnap.data();
+                userName = userRecords.username || auth.currentUser.displayName || 'Guest';
+            } else {
+                userRecords = null;
+            }
+            renderApp();
+        }, (error) => {
+            renderMessage(`Database Error: Could not load user records.`, 'danger');
+        });
+    }
+
+    // --- MAIN REGISTRATION LOGIC WITH TRANSACTIONAL WRITE ---
+    async function registerUser(newUsername) {
+        if (!auth.currentUser || !isAuthReady) {
+            renderMessage("Authentication not ready. Please wait. (Still connecting to Firebase)", 'danger');
+            return;
+        }
+
+        const currentUserId = auth.currentUser.uid;
+        const usernameLower = newUsername.toLowerCase();
+        const userRecordsRef = getRecordsRef(currentUserId);
+        const publicUsernameRef = getPublicUsernameRef(usernameLower);
+
+        try {
+            await runTransaction(db, async (transaction) => {
+                const publicDocSnap = await transaction.get(publicUsernameRef);
+                if (publicDocSnap.exists()) {
+                    throw new Error("Username is already taken. Please choose another.");
+                }
+
+                transaction.set(publicUsernameRef, { uid: currentUserId, created: new Date().toISOString() });
+                
+                await updateProfile(auth.currentUser, { displayName: newUsername });
+                
+                const initialData = {
+                    username: newUsername,
+                    scores: {
+                        'COMPUTER HARDWARE SERVICING': 0,
+                        'GARMENTS AND FASHION DESIGN TECHNOLOGY': 0,
+                        'FOOD SERVICING AND MANAGEMENT TECHNOLOGY': 0,
+                        'ELECTRICAL TECHNOLOGY': 0,
+                    },
+                    history: []
+                };
+
+                transaction.set(userRecordsRef, initialData, { merge: true });
+                userRecords = initialData;
+            });
+            
+            userName = newUsername;
+            renderMessage(`Welcome, ${newUsername}! Registration successful.`, 'secondary');
+            setupRecordListener();
+            setView('dashboard');
+
+        } catch (error) {
+            if (error.message.includes("Username is already taken")) {
+                renderMessage(`Registration Failed: ${error.message}`, 'danger');
+            } else {
+                renderMessage(`Registration Failed: Could not complete registration. (Check Firestore Rules)`, 'danger');
+            }
+        }
+    }
+
+    // --- SCORE UPDATE LOGIC ---
+    async function updateScoreRecord(category, score) {
+        if (!userId || !userName) {
+            renderMessage("Cannot save record: User not logged in.", 'danger');
+            return;
+        }
+
+        const recordsRef = getRecordsRef(userId);
+        const maxScore = QUIZ_DATA[category].length;
+
+        try {
+            await runTransaction(db, async (transaction) => {
+                const docSnap = await transaction.get(recordsRef);
+                let data = docSnap.exists() ? docSnap.data() : {
+                    username: userName,
+                    scores: { 
+                        'COMPUTER HARDWARE SERVICING': 0, 
+                        'GARMENTS AND FASHION DESIGN TECHNOLOGY': 0, 
+                        'FOOD SERVICING AND MANAGEMENT TECHNOLOGY': 0, 
+                        'ELECTRICAL TECHNOLOGY': 0 
+                    },
+                    history: []
+                };
+
+                const currentHighscore = data.scores[category] || 0;
+                if (score > currentHighscore) {
+                    data.scores[category] = score;
+                }
+
+                data.history.push({
+                    category: category,
+                    score: score,
+                    maxScore: maxScore,
+                    timestamp: new Date().toISOString()
+                });
+
+                transaction.set(recordsRef, data);
+                userRecords = data;
+            });
+
+            renderMessage(`Score saved successfully! High score for ${category} updated.`, 'secondary');
+        } catch (error) {
+            renderMessage(`Failed to save score: ${error.message}`, 'danger');
+        }
+    }
+
+    // --- UI/VIEW MANAGEMENT ---
+    function setView(viewName) {
+        currentView = viewName;
+        renderApp();
+    }
+
+    function renderMessage(message, type = 'primary') {
+        const appDiv = document.getElementById('app');
+        const messageId = `msg-${Date.now()}`;
+        const colorClass = type === 'danger' ? 'bg-red-100 text-red-800' :
+                             type === 'secondary' ? 'bg-green-100 text-green-800' :
+                             'bg-blue-100 text-blue-800';
+
+        const messageDiv = document.createElement('div');
+        messageDiv.id = messageId;
+        messageDiv.className = `p-3 mb-4 rounded-xl text-sm font-medium ${colorClass} transition-opacity duration-500 ease-out`;
+        messageDiv.innerHTML = message;
+
+        appDiv.insertBefore(messageDiv, appDiv.firstChild);
+
+        setTimeout(() => {
+            const el = document.getElementById(messageId);
+            if (el) {
+                el.style.opacity = '0';
+                setTimeout(() => el.remove(), 500);
+            }
+        }, 5000);
+    }
+
+    function renderApp() {
+        const appDiv = document.getElementById('app');
+        const contentDiv = document.createElement('div');
+        contentDiv.id = 'content';
+        contentDiv.className = 'pt-2';
+
+        if (currentView === 'auth') {
+            contentDiv.innerHTML = renderAuthScreen();
+        } else if (currentView === 'dashboard') {
+            contentDiv.innerHTML = renderDashboard();
+        } else if (currentView === 'quiz') {
+            contentDiv.innerHTML = renderQuizScreen();
+        } else if (currentView === 'results') {
+            contentDiv.innerHTML = renderResultsScreen();
+        } else {
+            contentDiv.innerHTML = '<h2 class="text-xl text-center text-gray-700">Application Error</h2>';
+        }
+
+        const existingContent = document.getElementById('content');
+        if (existingContent) {
+            appDiv.replaceChild(contentDiv, existingContent);
+        } else {
+            appDiv.appendChild(contentDiv);
+        }
+
+        if (currentView === 'auth') {
+            document.getElementById('register-form')?.addEventListener('submit', handleRegistration);
+            document.getElementById('login-form')?.addEventListener('submit', handleLogin);
+        } else if (currentView === 'dashboard') {
+            document.getElementById('logout-btn')?.addEventListener('click', handleLogout);
+            document.querySelectorAll('.quiz-start-btn').forEach(button => {
+                button.addEventListener('click', () => handleStartQuiz(button.dataset.category));
+            });
+        } else if (currentView === 'quiz') {
+            document.getElementById('quiz-form')?.addEventListener('submit', handleQuizSubmit);
+        }
+    }
+
+    // --- SCREEN RENDERING FUNCTIONS ---
+    function renderAuthScreen() {
+        if (userName) {
+            return `
+                <div class="text-center p-4">
+                    <h1 class="text-3xl font-bold text-gray-800 mb-6">Welcome Back!</h1>
+                    <p class="text-lg text-gray-600 mb-8">You are currently signed in as <strong>${userName}</strong>.</p>
+                    <button id="logout-btn" class="button-danger w-full mt-4">Log Out / Switch User</button>
+                    <button onclick="window.location.reload()" class="button-primary w-full mt-2">Go to Dashboard</button>
+                </div>
+            `;
+        }
+
+        return `
+            <h1 class="text-3xl font-extrabold text-gray-800 mb-6 text-center">Vocational Skills Assessment Portal</h1>
+            <p class="text-sm text-gray-500 mb-4 text-center">Your private records are stored securely using your unique ID: <code class="bg-gray-100 p-1 rounded">${userId || '...'}</code></p>
+
+            <div class="bg-gray-50 p-6 rounded-2xl shadow-inner">
+                <h2 class="text-xl font-bold text-gray-700 mb-4">Register / Set Username</h2>
+                <form id="register-form">
+                    <div class="mb-4">
+                        <label for="reg-username" class="block text-sm font-medium text-gray-700 mb-1">Choose a Unique Username</label>
+                        <input type="text" id="reg-username" name="username" required minlength="3" placeholder="e.g., JohnDoe123" class="w-full p-3 border border-gray-300 rounded-xl focus:ring-blue-500 focus:border-blue-500">
+                    </div>
+                    <button type="submit" class="button-primary w-full">Set Username and Enter Portal</button>
+                    <p class="text-xs text-gray-500 mt-2 text-center">Note: Since this app uses secure Firebase authentication, setting a username here links it to your unique anonymous ID, establishing your record.</p>
+                </form>
+            </div>
+        `;
+    }
+
+    function renderDashboard() {
+        const records = userRecords || { scores: {} };
+        const categories = Object.keys(QUIZ_DATA);
+
+        return `
+            <div class="flex justify-between items-center mb-6 border-b pb-4">
+                <div>
+                    <h1 class="text-2xl font-bold text-gray-800">Welcome, ${userName}</h1>
+                    <p class="text-sm text-gray-500">Your User ID: <code class="text-xs bg-gray-100 p-1 rounded">${userId}</code></p>
+                </div>
+                <button id="logout-btn" class="button-danger text-sm">Logout</button>
+            </div>
+
+            <h2 class="text-xl font-semibold text-gray-700 mb-4">Quiz Categories & High Scores</h2>
+
+            <div class="space-y-4">
+                ${categories.map(category => {
+                    const maxScore = QUIZ_DATA[category].length;
+                    const score = records.scores[category] || 0;
+                    const percentage = maxScore > 0 ? ((score / maxScore) * 100).toFixed(0) : 0;
+                    const questionCountText = maxScore > 0 ? `${maxScore} Questions` : 'No Questions';
+
+                    return `
+                        <div class="bg-white p-5 border border-gray-200 rounded-xl shadow-lg flex flex-col sm:flex-row justify-between items-start sm:items-center">
+                            <div class="mb-3 sm:mb-0">
+                                <h3 class="text-lg font-bold text-gray-700">${category}</h3>
+                                <p class="text-sm text-gray-500">${questionCountText} | Max Score: ${maxScore}</p>
+                            </div>
+                            <div class="flex items-center space-x-4">
+                                <div class="text-center">
+                                    <p class="text-xs font-semibold text-gray-400">HIGH SCORE</p>
+                                    <p class="text-2xl font-extrabold ${score >= (maxScore * 0.8) ? 'text-green-600' : (score >= (maxScore * 0.5) ? 'text-yellow-600' : 'text-red-600')}">${score}/${maxScore}</p>
+                                    <p class="text-sm text-gray-500">${percentage}%</p>
+                                </div>
+                                <button data-category="${category}" class="quiz-start-btn button-secondary">
+                                    Start Quiz
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+            
+            <div class="mt-8">
+                <h2 class="text-xl font-semibold text-gray-700 mb-4">Recent Quiz History</h2>
+                ${renderHistory(userRecords)}
+            </div>
+        `;
+    }
+    
+    function renderHistory(records) {
+        if (!records || !records.history || records.history.length === 0) {
+            return '<p class="text-gray-500">No recent quiz attempts recorded.</p>';
+        }
+
+        const recentHistory = records.history.slice(-5).reverse();
+
+        return `
+            <ul class="space-y-2 text-sm">
+                ${recentHistory.map(item => {
+                    const scoreClass = item.score / item.maxScore > 0.6 ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700';
+                    const time = new Date(item.timestamp).toLocaleString();
+                    return `
+                        <li class="p-3 rounded-xl border border-gray-200 flex justify-between items-center">
+                            <span class="font-medium text-gray-700">${item.category}</span>
+                            <span class="${scoreClass} px-3 py-1 rounded-full font-bold">
+                                ${item.score}/${item.maxScore}
+                            </span>
+                            <span class="text-xs text-gray-400">${time}</span>
+                        </li>
+                    `;
+                }).join('')}
+            </ul>
+        `;
+    }
+
+
+    function renderQuizScreen() {
+        const category = currentQuizCategory;
+        const quiz = QUIZ_DATA[category];
+        const question = quiz[currentQuestionIndex];
+        const totalQuestions = quiz.length;
+
+        if (!question) {
+            return `<p class="text-center text-red-500">Quiz data missing for ${category}.</p>`;
+        }
+
+        const isTrueFalse = question.options.length === 2 && question.options.includes("True") && question.options.includes("False");
+        
+        const optionClasses = isTrueFalse ? 'flex space-x-4' : 'space-y-3';
+
+
+        return `
+            <div class="flex justify-between items-center mb-6 pb-4 border-b">
+                <h1 class="text-2xl font-bold text-gray-800">${category} Quiz</h1>
+                <p class="text-lg font-semibold text-blue-600">Q ${currentQuestionIndex + 1}/${totalQuestions}</p>
+            </div>
+
+            <form id="quiz-form">
+                <h3 class="text-xl font-semibold text-gray-700 mb-6">${question.q}</h3>
+
+                <div class="${optionClasses}">
+                    ${question.options.map((option, index) => `
+                        <div class="custom-radio ${isTrueFalse ? 'flex-1' : ''}">
+                            <input type="radio" id="option-${index}" name="answer" value="${option}" required ${currentQuizAnswers[currentQuestionIndex] === option ? 'checked' : ''}>
+                            <label for="option-${index}" class="text-gray-700 text-center">${option}</label>
+                        </div>
+                    `).join('')}
+                </div>
+
+                <div class="flex justify-between items-center mt-8 pt-4 border-t">
+                    <button type="button" id="prev-btn" class="button-secondary ${currentQuestionIndex === 0 ? 'opacity-50 cursor-not-allowed' : ''}" ${currentQuestionIndex === 0 ? 'disabled' : ''} onclick="window.handlePrevQuestion()">
+                        &larr; Previous
+                    </button>
+                    ${currentQuestionIndex < totalQuestions - 1 ? `
+                        <button type="submit" class="button-primary">
+                            Next Question &rarr;
+                        </button>
+                    ` : `
+                        <button type="submit" class="button-secondary bg-green-600 hover:bg-green-700">
+                            Submit Quiz &check;
+                        </button>
+                    `}
+                </div>
+            </form>
+        `;
+    }
+
+    function renderResultsScreen() {
+        const category = currentQuizCategory;
+        const quiz = QUIZ_DATA[category];
+        let correctCount = 0;
+
+        for (const [index, q] of quiz.entries()) {
+            if (currentQuizAnswers[index] === q.a) {
+                correctCount++;
+            }
+        }
+
+        const maxScore = quiz.length;
+        const scorePercentage = (correctCount / maxScore) * 100;
+        const resultMessage = scorePercentage >= 80 ? "Excellent work! Keep it up." :
+                              scorePercentage >= 50 ? "Good attempt! Review your weak points." :
+                              "Needs improvement. Study the materials and try again!";
+
+        return `
+            <div class="text-center p-6">
+                <h1 class="text-3xl font-extrabold text-gray-800 mb-4">Quiz Complete!</h1>
+                <p class="text-xl font-medium text-gray-600 mb-8">${category} Results</p>
+
+                <div class="bg-blue-50 p-6 rounded-2xl inline-block shadow-inner mb-8">
+                    <p class="text-6xl font-black text-blue-600">${correctCount}/${maxScore}</p>
+                    <p class="text-xl font-bold text-gray-700 mt-2">${scorePercentage.toFixed(0)}%</p>
+                </div>
+
+                <p class="text-lg font-semibold ${scorePercentage >= 80 ? 'text-green-600' : 'text-yellow-600'} mb-6">${resultMessage}</p>
+
+                <div class="space-y-3 text-left border-t pt-4">
+                    <h2 class="text-lg font-bold text-gray-700 mb-3">Review Answers</h2>
+                    ${quiz.map((q, index) => {
+                        const userAnswer = currentQuizAnswers[index] || 'No Answer';
+                        const isCorrect = userAnswer === q.a;
+                        const icon = isCorrect ? '✅' : '❌';
+                        const color = isCorrect ? 'text-green-600' : 'text-red-600';
+
+                        return `
+                            <div class="p-4 rounded-xl ${isCorrect ? 'bg-green-50' : 'bg-red-50'} border border-gray-200">
+                                <p class="font-bold text-gray-800 mb-1">${icon} Q${index + 1}: ${q.q}</p>
+                                <p class="text-sm ${color}">Your Answer: ${userAnswer}</p>
+                                ${!isCorrect ? `<p class="text-sm text-gray-700">Correct Answer: ${q.a}</p>` : ''}
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+
+                <button onclick="window.handleGoToDashboard()" class="button-primary w-full mt-8">
+                    Go to Dashboard
+                </button>
+            </div>
+        `;
+    }
+
+    // --- EVENT HANDLERS ---
+    function handleRegistration(e) {
+        e.preventDefault();
+        const newUsername = document.getElementById('reg-username').value.trim();
+        if (newUsername) {
+            registerUser(newUsername);
+        } else {
+            renderMessage("Please enter a valid username.", 'danger');
+        }
+    }
+
+    function handleLogin(e) {
+        e.preventDefault();
+        setView('dashboard');
+    }
+
+    async function handleLogout() {
+        if (auth) {
+            await signOut(auth);
+            userRecords = null;
+            userName = null;
+            renderMessage("Successfully logged out. You can register a new username now.", 'secondary');
+        }
+    }
+
+    function handleStartQuiz(category) {
+        currentQuizCategory = category;
+        currentQuestionIndex = 0;
+        currentQuizAnswers = {};
+        setView('quiz');
+    }
+
+    window.handlePrevQuestion = () => {
+        if (currentQuestionIndex > 0) {
+            const selectedOption = document.querySelector('input[name="answer"]:checked');
+            if (selectedOption) {
+                currentQuizAnswers[currentQuestionIndex] = selectedOption.value;
+            }
+            currentQuestionIndex--;
+            setView('quiz');
+        }
+    }
+
+    function handleQuizSubmit(e) {
+        e.preventDefault();
+        
+        const selectedOption = document.querySelector('input[name="answer"]:checked');
+        if (!selectedOption) {
+            renderMessage("Please select an answer before proceeding.", 'danger');
+            return;
+        }
+        currentQuizAnswers[currentQuestionIndex] = selectedOption.value;
+
+        const totalQuestions = QUIZ_DATA[currentQuizCategory].length;
+
+        if (currentQuestionIndex < totalQuestions - 1) {
+            currentQuestionIndex++;
+            setView('quiz');
+        } else {
+            let correctCount = 0;
+            const quiz = QUIZ_DATA[currentQuizCategory];
+            for (const [index, q] of quiz.entries()) {
+                if (currentQuizAnswers[index] === q.a) {
+                    correctCount++;
+                }
+            }
+
+            updateScoreRecord(currentQuizCategory, correctCount);
+
+            setView('results');
+        }
+    }
+
+    window.handleGoToDashboard = () => {
+        setView('dashboard');
+    }
+
+    // --- START APPLICATION ---
+    initializeFirebase();
+
+</script>
+</body>
+</html>
