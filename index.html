@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Vocational Skills Assessment Portal</title> <script src="https://cdn.tailwindcss.com"></script>
+    <title>Vocational Skills Assessment Portal</title>
+    <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -110,20 +111,21 @@
     let userRecords = null;
     let isAuthReady = false;
 
-    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-    
-    const defaultFirebaseConfig = {
-        apiKey: "AIzaSyATrF3HU85bkDfhcv2P8NFXh-30UWxD6yU",
-        authDomain: "kkkk-d3f69.firebaseapp.com",
-        projectId: "kkkk-d3f69",
-        storageBucket: "kkkk-d3f69.firebasestorage.app",
-        messagingSenderId: "105909143390",
-        appId: "1:105909143390:web:c62140b87c3072b1c031cf"
+    // Use the specific provided configuration
+    const firebaseConfig = {
+        apiKey: "AIzaSyDM4X5HE-cwZLmx0E2uh2czvgfa1mmiJAI",
+        authDomain: "skills-assessment-portal.firebaseapp.com",
+        projectId: "skills-assessment-portal",
+        storageBucket: "skills-assessment-portal.firebasestorage.app",
+        messagingSenderId: "837656869746",
+        appId: "1:837656869746:web:467318005b0241a49ebbeb"
     };
 
-    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : defaultFirebaseConfig;
-
-    const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+    // Assuming the app ID matches the projectId for simplicity in artifacts pathing
+    const appId = firebaseConfig.projectId;
+    
+    // Default values if Canvas environment variables are missing (using null here since config is explicit)
+    const initialAuthToken = null;
 
     let currentView = 'auth';
     let currentQuizCategory = null;
@@ -308,7 +310,7 @@
             renderMessage("Authentication not ready. Please wait.", 'danger');
             return;
         }
-        
+
         const usernameLower = newUsername.toLowerCase();
         const userRecordsRef = getRecordsRef(userId);
         const publicUsernameRef = getPublicUsernameRef(usernameLower);
@@ -488,7 +490,8 @@
         }
 
         return `
-            <h1 class="text-3xl font-extrabold text-gray-800 mb-6 text-center">Vocational Skills Assessment Portal</h1> <p class="text-sm text-gray-500 mb-4 text-center">Your private records are stored securely using your unique ID: <code class="bg-gray-100 p-1 rounded">${userId || '...'}</code></p>
+            <h1 class="text-3xl font-extrabold text-gray-800 mb-6 text-center">Vocational Skills Assessment Portal</h1>
+            <p class="text-sm text-gray-500 mb-4 text-center">Your private records are stored securely using your unique ID: <code class="bg-gray-100 p-1 rounded">${userId || '...'}</code></p>
 
             <div class="bg-gray-50 p-6 rounded-2xl shadow-inner">
                 <h2 class="text-xl font-bold text-gray-700 mb-4">Register / Set Username</h2>
