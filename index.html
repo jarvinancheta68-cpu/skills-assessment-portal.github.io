@@ -3,8 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Vocational Quiz System</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <title>Vocational Skills Assessment Portal</title> <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -271,10 +270,16 @@
         }
     }
 
-    // --- FIRESTORE FUNCTIONS ---
+    // --- FIRESTORE FUNCTIONS (Private Records) ---
     const getRecordsRef = (uid) => {
         const recordsCollectionPath = `/artifacts/${appId}/users/${uid}/quiz_records`;
         return doc(db, recordsCollectionPath, 'data');
+    };
+
+    // --- FIRESTORE FUNCTIONS (Public Username Check) ---
+    const getPublicUsernameRef = (username) => {
+        const publicCollectionPath = `/artifacts/${appId}/public_usernames`;
+        return doc(db, publicCollectionPath, username.toLowerCase());
     };
 
     function setupRecordListener() {
@@ -303,34 +308,55 @@
             renderMessage("Authentication not ready. Please wait.", 'danger');
             return;
         }
-
-        const recordsRef = getRecordsRef(userId);
+        
+        const usernameLower = newUsername.toLowerCase();
+        const userRecordsRef = getRecordsRef(userId);
+        const publicUsernameRef = getPublicUsernameRef(usernameLower);
 
         try {
-            await updateProfile(auth.currentUser, { displayName: newUsername });
+            await runTransaction(db, async (transaction) => {
+                // 1. Check for duplicate username in the public list
+                const publicDocSnap = await transaction.get(publicUsernameRef);
+                if (publicDocSnap.exists()) {
+                    throw new Error("Username is already taken. Please choose another.");
+                }
+
+                // 2. Claim the username in the public list
+                transaction.set(publicUsernameRef, { uid: userId, created: new Date().toISOString() });
+                
+                // 3. Update Auth display name
+                await updateProfile(auth.currentUser, { displayName: newUsername });
+                
+                // 4. Initialize private user records
+                const initialData = {
+                    username: newUsername,
+                    scores: {
+                        'COMPUTER HARDWARE SERVICING': 0,
+                        'GARMENTS AND FASHION DESIGN TECHNOLOGY': 0,
+                        'FOOD SERVICING AND MANAGEMENT TECHNOLOGY': 0,
+                        'ELECTRICAL TECHNOLOGY': 0,
+                    },
+                    history: []
+                };
+
+                transaction.set(userRecordsRef, initialData, { merge: true });
+                userRecords = initialData;
+            });
+            
+            // Transaction succeeded
             userName = newUsername;
-
-            const initialData = {
-                username: newUsername,
-                scores: {
-                    'COMPUTER HARDWARE SERVICING': 0,
-                    'GARMENTS AND FASHION DESIGN TECHNOLOGY': 0,
-                    'FOOD SERVICING AND MANAGEMENT TECHNOLOGY': 0,
-                    'ELECTRICAL TECHNOLOGY': 0,
-                },
-                history: []
-            };
-
-            await setDoc(recordsRef, initialData, { merge: true });
-            userRecords = initialData;
-
             renderMessage(`Welcome, ${newUsername}! Registration successful.`, 'secondary');
             setupRecordListener();
             setView('dashboard');
 
         } catch (error) {
             console.error("Registration failed:", error);
-            renderMessage(`Registration Failed: ${error.message}. Try another username.`, 'danger');
+            // Check if the error is the duplicate error we threw
+            if (error.message.includes("Username is already taken")) {
+                renderMessage(`Registration Failed: ${error.message}`, 'danger');
+            } else {
+                renderMessage(`Registration Failed: Could not complete registration.`, 'danger');
+            }
         }
     }
 
@@ -434,6 +460,7 @@
             appDiv.appendChild(contentDiv);
         }
 
+        // --- EVENT ATTACHMENT ---
         if (currentView === 'auth') {
             document.getElementById('register-form')?.addEventListener('submit', handleRegistration);
             document.getElementById('login-form')?.addEventListener('submit', handleLogin);
@@ -447,7 +474,7 @@
         }
     }
 
-    // --- SCREEN RENDERING FUNCTIONS (Auth, Dashboard, Quiz, Results) ---
+    // --- SCREEN RENDERING FUNCTIONS ---
     function renderAuthScreen() {
         if (userName) {
             return `
@@ -461,14 +488,13 @@
         }
 
         return `
-            <h1 class="text-3xl font-extrabold text-gray-800 mb-6 text-center">Vocational Quiz Portal</h1>
-            <p class="text-sm text-gray-500 mb-4 text-center">Your private records are stored securely using your unique ID: <code class="bg-gray-100 p-1 rounded">${userId || '...'}</code></p>
+            <h1 class="text-3xl font-extrabold text-gray-800 mb-6 text-center">Vocational Skills Assessment Portal</h1> <p class="text-sm text-gray-500 mb-4 text-center">Your private records are stored securely using your unique ID: <code class="bg-gray-100 p-1 rounded">${userId || '...'}</code></p>
 
             <div class="bg-gray-50 p-6 rounded-2xl shadow-inner">
                 <h2 class="text-xl font-bold text-gray-700 mb-4">Register / Set Username</h2>
                 <form id="register-form">
                     <div class="mb-4">
-                        <label for="reg-username" class="block text-sm font-medium text-gray-700 mb-1">Choose a Username</label>
+                        <label for="reg-username" class="block text-sm font-medium text-gray-700 mb-1">Choose a Unique Username</label>
                         <input type="text" id="reg-username" name="username" required minlength="3" placeholder="e.g., JohnDoe123" class="w-full p-3 border border-gray-300 rounded-xl focus:ring-blue-500 focus:border-blue-500">
                     </div>
                     <button type="submit" class="button-primary w-full">Set Username and Enter Portal</button>
